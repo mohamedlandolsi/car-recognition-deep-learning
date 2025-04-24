@@ -22,6 +22,7 @@ organized_cars_dataset/
 cars_test/
 cars_train/
 cars_annos.mat
+saved_model/
 
 # OS specific files
 .DS_Store
