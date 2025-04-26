@@ -35,6 +35,11 @@ saved_model/
 *.tflite
 *.pt
 *.pth
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
 
 # Data files
 *.npy
@@ -46,6 +51,10 @@ saved_model/
 *.json
 *.mat
 *.xml
+*.hdf5
+*.tfrecord
+*.parquet
+*.arrow
 
 # OS specific files
 .DS_Store
@@ -82,3 +91,9 @@ config.local.yaml
 *.local.yml
 credentials.json
 *_credentials.json
+
+# Git LFS (Large File Storage) tracking patterns
+# Uncomment if using Git LFS
+# *.psd filter=lfs diff=lfs merge=lfs -text
+# *.jpg filter=lfs diff=lfs merge=lfs -text
+# *.png filter=lfs diff=lfs merge=lfs -text
