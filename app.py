@@ -33,8 +33,16 @@ def load_model():
     
     # Load saved model
     try:
-        model = tf.keras.models.load_model(MODEL_DIR)
-        print(f"Model loaded from {MODEL_DIR}")
+        # Update the loading method to use TFSMLayer for Keras 3 compatibility
+        inputs = tf.keras.Input(shape=(224, 224, 3))
+        tfsm_layer = tf.keras.layers.TFSMLayer(
+            MODEL_DIR, 
+            call_endpoint='serving_default'
+        )
+        outputs = tfsm_layer(inputs)
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        
+        print(f"Model loaded from {MODEL_DIR} using TFSMLayer")
         
         # Load class names
         class_file = os.path.join(MODEL_DIR, "class_names.json")
@@ -78,48 +86,98 @@ def predict():
         try:
             # Read image file
             img_bytes = file.read()
+            print(f"Read {len(img_bytes)} bytes from uploaded file: {file.filename}")
+            
             img = Image.open(io.BytesIO(img_bytes))
+            print(f"Opened image: size={img.size}, mode={img.mode}")
             
             # Convert to RGB if needed (in case of PNG with alpha channel)
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+                print(f"Converted image to RGB mode")
             
             # Resize to expected size
             img = img.resize(IMAGE_SIZE)
+            print(f"Resized image to {IMAGE_SIZE}")
             
             # Convert to array and preprocess
             img_array = image.img_to_array(img)
+            print(f"Converted to array: shape={img_array.shape}, dtype={img_array.dtype}")
+            
             img_array = np.expand_dims(img_array, axis=0)
+            print(f"Expanded dimensions: shape={img_array.shape}")
             
             # Apply preprocessing based on the model type
             # For ResNet50V2 (transfer learning model)
             img_array = preprocess_input(img_array)
+            print(f"Applied preprocessing")
             
             # Make prediction
-            predictions = model.predict(img_array)
+            print(f"Running prediction with model...")
+            predictions_dict = model(img_array)  # TFSMLayer returns a dictionary
             
-            # Get the top 5 predictions
-            top_5_idx = predictions[0].argsort()[-5:][::-1]
+            # Extract the actual predictions tensor from the dictionary
+            # The key might be 'outputs' or a specific endpoint name
+            if isinstance(predictions_dict, dict):
+                print(f"Prediction returned a dictionary with keys: {list(predictions_dict.keys())}")
+                # Try to get predictions from the dictionary - the exact key depends on the model
+                if 'outputs' in predictions_dict:
+                    predictions = predictions_dict['outputs']
+                    print(f"Using 'outputs' key, shape={predictions.shape}")
+                else:
+                    # If 'outputs' is not found, try the first key
+                    first_key = list(predictions_dict.keys())[0]
+                    predictions = predictions_dict[first_key]
+                    print(f"Using '{first_key}' key, shape={predictions.shape}")
+            else:
+                # It might already be a tensor
+                predictions = predictions_dict
+                print(f"Prediction output is not a dictionary")
+            
+            # Now that we have the prediction tensor, we can proceed as before
+            print(f"Prediction completed: shape={predictions.shape}")
+            
+            # Convert the EagerTensor to numpy array before using argsort
+            predictions_np = predictions.numpy()
+            top_5_idx = predictions_np[0].argsort()[-5:][::-1]
+            print(f"Top 5 indices: {top_5_idx}")
+            
+            # Check if class_names list is long enough to contain all indices
+            if max(top_5_idx) >= len(class_names):
+                print(f"Warning: Prediction index {max(top_5_idx)} exceeds class_names length {len(class_names)}")
+                # Create dummy class names for any missing indices
+                extended_class_names = class_names.copy()
+                while len(extended_class_names) <= max(top_5_idx):
+                    extended_class_names.append(f"Class_{len(extended_class_names)}")
+                class_names_to_use = extended_class_names
+            else:
+                class_names_to_use = class_names
+                
             top_5_predictions = [
                 {
-                    "class": class_names[idx],
-                    "confidence": float(predictions[0][idx] * 100)  # Convert to percentage
+                    "class": class_names_to_use[idx],
+                    "confidence": float(predictions_np[0][idx] * 100)  # Convert to percentage
                 }
                 for idx in top_5_idx
             ]
+            print(f"Formatted predictions: {top_5_predictions}")
             
             # Return results
             return jsonify({
                 'status': 'success',
                 'predictions': top_5_predictions,
                 'top_prediction': {
-                    "class": class_names[top_5_idx[0]],
-                    "confidence": float(predictions[0][top_5_idx[0]] * 100)
+                    "class": class_names_to_use[top_5_idx[0]],
+                    "confidence": float(predictions_np[0][top_5_idx[0]] * 100)
                 }
             })
             
         except Exception as e:
-            return jsonify({'error': f'Error processing image: {str(e)}'}), 500
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"Error processing image: {str(e)}")
+            print(f"Traceback: {error_traceback}")
+            return jsonify({'error': f'Error processing image: {str(e)}', 'traceback': error_traceback}), 500
     
     return jsonify({'error': 'File type not allowed'}), 400
 

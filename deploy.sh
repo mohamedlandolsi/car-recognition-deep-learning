@@ -2,7 +2,7 @@
 # Script to build and deploy the car recognition API to Google Cloud
 
 # Configuration
-PROJECT_ID="your-gcp-project-id"  # Replace with your actual GCP project ID
+PROJECT_ID="your-car-recognition-project"  # Replace with your actual GCP project ID
 GCP_REGION="us-central1"  # Replace with your preferred region
 IMAGE_NAME="car-recognition-api"
 GCR_IMAGE="gcr.io/${PROJECT_ID}/${IMAGE_NAME}"

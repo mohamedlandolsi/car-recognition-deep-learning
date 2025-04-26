@@ -12,9 +12,12 @@ build/
 .venv/
 venv/
 ENV/
+env/
+.env
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
 # Model checkpoints and large data files
 training_checkpoints/
@@ -23,14 +26,59 @@ cars_test/
 cars_train/
 cars_annos.mat
 saved_model/
+*.h5
+*.weights
+*.model
+*.bin
+*.pb
+*.onnx
+*.tflite
+*.pt
+*.pth
+
+# Data files
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.joblib
+*.csv
+*.json
+*.mat
+*.xml
 
 # OS specific files
 .DS_Store
 Thumbs.db
+thumbs.db
+desktop.ini
+*.swp
+*.swo
 
 # IDE specific files
 .idea/
 .vscode/
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.spyderproject
+.spyproject
 
 # Log files
 *.log
+logs/
+*.out
+.ipython/
+.jupyter/
+
+# Docker related
+.dockerignore
+docker-compose.override.yml
+
+# Local configuration
+config.local.yaml
+*.local.yaml
+*.local.yml
+credentials.json
+*_credentials.json
