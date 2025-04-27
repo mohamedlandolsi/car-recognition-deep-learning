@@ -110,12 +110,12 @@ chmod +x deploy.sh
    gcloud container clusters create car-recognition-cluster \
        --num-nodes=2 \
        --machine-type=n1-standard-2 \
-       --region=us-central1
+       --region=europe-west1
    ```
 
 4. **Get credentials for the cluster:**
    ```bash
-   gcloud container clusters get-credentials car-recognition-cluster --region=us-central1
+   gcloud container clusters get-credentials car-recognition-cluster --region=europe-west1
    ```
 
 5. **Update the Kubernetes deployment file:**
@@ -186,7 +186,7 @@ To avoid incurring charges, delete the resources when not in use:
 
 ```bash
 # Delete the GKE cluster
-gcloud container clusters delete car-recognition-cluster --region=us-central1
+gcloud container clusters delete car-recognition-cluster --region=europe-west1
 
 # Delete the container image
 gcloud container images delete gcr.io/[YOUR_PROJECT_ID]/car-recognition-api:latest

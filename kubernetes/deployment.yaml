@@ -16,33 +16,45 @@ spec:
     spec:
       containers:
       - name: car-recognition-api
-        image: gcr.io/[PROJECT_ID]/car-recognition-api:latest
+        image: gcr.io/car-recognition-deep-learning/car-recognition-api:latest
         ports:
         - containerPort: 8080
         resources:
           requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
             memory: "2Gi"
             cpu: "1"
-          limits:
-            memory: "4Gi"
-            cpu: "2"
         env:
         - name: PORT
           value: "8080"
         - name: MODEL_DIR
-          value: "/app/saved_model/transfer"
+          value: "/tmp/models/transfer"
+        - name: CLOUD_STORAGE_BUCKET
+          value: "car-recognition-models-europe"
+        - name: CLOUD_STORAGE_MODEL_PATH
+          value: "models/transfer"
         livenessProbe:
           httpGet:
             path: /health
             port: 8080
-          initialDelaySeconds: 120
+          initialDelaySeconds: 180
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /health
             port: 8080
-          initialDelaySeconds: 120
+          initialDelaySeconds: 180
           periodSeconds: 30
+        volumeMounts:
+        - name: model-cache
+          mountPath: /tmp/models
+      volumes:
+      - name: model-cache
+        emptyDir: {}
+      # Use a service account with storage access
+      serviceAccountName: car-recognition-service-account
 ---
 apiVersion: v1
 kind: Service

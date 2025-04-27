@@ -48,7 +48,9 @@ saved_model/
 *.pickle
 *.joblib
 *.csv
+# Allow class_names.json but ignore other JSON files
 *.json
+!class_names.json
 *.mat
 *.xml
 *.hdf5

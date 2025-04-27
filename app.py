@@ -8,17 +8,22 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from PIL import Image
 import io
+from google.cloud import storage
 
+# Create Flask app with model loading on startup
 app = Flask(__name__)
 
 # Configuration
-MODEL_DIR = os.environ.get('MODEL_DIR', 'saved_model/transfer')
+MODEL_DIR = os.environ.get('MODEL_DIR', '/tmp/models/transfer')
+CLOUD_STORAGE_BUCKET = os.environ.get('CLOUD_STORAGE_BUCKET', 'car-recognition-models-europe')
+CLOUD_STORAGE_MODEL_PATH = os.environ.get('CLOUD_STORAGE_MODEL_PATH', 'models/transfer')
 UPLOAD_FOLDER = '/tmp/uploads'
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 IMAGE_SIZE = (224, 224)
 
-# Create upload folder if it doesn't exist
+# Create upload and model folders if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
 
 # Global variables for model and class names
 model = None
@@ -27,22 +32,70 @@ class_names = []
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def download_model_from_gcs():
+    """Download model from Google Cloud Storage"""
+    try:
+        print(f"Downloading model from gs://{CLOUD_STORAGE_BUCKET}/{CLOUD_STORAGE_MODEL_PATH}")
+        client = storage.Client()
+        bucket = client.get_bucket(CLOUD_STORAGE_BUCKET)
+        
+        # List all blobs in the model directory
+        blobs = list(bucket.list_blobs(prefix=CLOUD_STORAGE_MODEL_PATH))
+        
+        print(f"Found {len(blobs)} files in bucket")
+        for blob in blobs:
+            print(f"Found file: {blob.name}")
+        
+        if not blobs:
+            raise Exception(f"No files found in gs://{CLOUD_STORAGE_BUCKET}/{CLOUD_STORAGE_MODEL_PATH}")
+        
+        # Download each file preserving directory structure
+        for blob in blobs:
+            destination_path = os.path.join(MODEL_DIR, os.path.relpath(blob.name, CLOUD_STORAGE_MODEL_PATH))
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            
+            print(f"Downloading {blob.name} to {destination_path}")
+            blob.download_to_filename(destination_path)
+            
+        print(f"Model successfully downloaded to {MODEL_DIR}")
+        print(f"Checking that files were downloaded correctly:")
+        for root, dirs, files in os.walk(MODEL_DIR):
+            for file in files:
+                print(f"  {os.path.join(root, file)}")
+        
+        # Specifically check for class names file
+        class_path = os.path.join(MODEL_DIR, "class_names.json")
+        if os.path.exists(class_path):
+            print(f"class_names.json exists at {class_path}, size: {os.path.getsize(class_path)} bytes")
+            # Print first few entries to verify content
+            with open(class_path, 'r') as f:
+                content = f.read()
+                print(f"First 200 characters: {content[:200]}...")
+        else:
+            print(f"ERROR: class_names.json NOT FOUND at {class_path}")
+        
+        return True
+    except Exception as e:
+        print(f"Error downloading model from GCS: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return False
+
 def load_model():
     """Load the model and class names at startup"""
     global model, class_names
     
+    # Check if we need to download the model from GCS
+    if not os.path.exists(os.path.join(MODEL_DIR, "saved_model.pb")):
+        success = download_model_from_gcs()
+        if not success:
+            raise Exception("Failed to download model from Google Cloud Storage")
+    
     # Load saved model
     try:
-        # Update the loading method to use TFSMLayer for Keras 3 compatibility
-        inputs = tf.keras.Input(shape=(224, 224, 3))
-        tfsm_layer = tf.keras.layers.TFSMLayer(
-            MODEL_DIR, 
-            call_endpoint='serving_default'
-        )
-        outputs = tfsm_layer(inputs)
-        model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        
-        print(f"Model loaded from {MODEL_DIR} using TFSMLayer")
+        # Use standard TensorFlow SavedModel loading instead of TFSMLayer
+        model = tf.saved_model.load(MODEL_DIR)
+        print(f"Model loaded from {MODEL_DIR} using tf.saved_model.load")
         
         # Load class names
         class_file = os.path.join(MODEL_DIR, "class_names.json")
@@ -52,19 +105,16 @@ def load_model():
             print(f"Loaded {len(class_names)} class names")
         else:
             print(f"Warning: Class names file not found at {class_file}")
-            # Create dummy class names as a fallback
-            output_dim = model.output_shape[1]
-            class_names = [f"Class_{i}" for i in range(output_dim)]
-            print(f"Created {len(class_names)} dummy class names based on output dimension")
+            # Create dummy class names as a fallback - we'll need to determine this later
+            class_names = [f"Class_{i}" for i in range(100)]  # Assuming 100 classes as a safe default
+            print(f"Created {len(class_names)} dummy class names")
         
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
 
-@app.before_first_request
-def initialize():
-    """Initialize the model before the first request"""
-    load_model()
+# Initialize the model - removed @app.before_first_request and will call explicitly
+# before starting the server
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -74,6 +124,11 @@ def predict():
     Expects an image file uploaded with the key 'file'
     Returns prediction results with class names and confidence scores
     """
+    # Ensure model is loaded
+    global model
+    if model is None:
+        load_model()
+        
     if 'file' not in request.files:
         return jsonify({'error': 'No file part in the request'}), 400
     
@@ -112,34 +167,38 @@ def predict():
             img_array = preprocess_input(img_array)
             print(f"Applied preprocessing")
             
-            # Make prediction
+            # Make prediction using the saved model's serving signature
             print(f"Running prediction with model...")
-            predictions_dict = model(img_array)  # TFSMLayer returns a dictionary
             
-            # Extract the actual predictions tensor from the dictionary
-            # The key might be 'outputs' or a specific endpoint name
-            if isinstance(predictions_dict, dict):
-                print(f"Prediction returned a dictionary with keys: {list(predictions_dict.keys())}")
-                # Try to get predictions from the dictionary - the exact key depends on the model
-                if 'outputs' in predictions_dict:
-                    predictions = predictions_dict['outputs']
-                    print(f"Using 'outputs' key, shape={predictions.shape}")
-                else:
-                    # If 'outputs' is not found, try the first key
-                    first_key = list(predictions_dict.keys())[0]
-                    predictions = predictions_dict[first_key]
-                    print(f"Using '{first_key}' key, shape={predictions.shape}")
+            # Use the model's serving_default signature
+            infer = model.signatures["serving_default"]
+            predictions_tensor = infer(tf.convert_to_tensor(img_array))
+            
+            # Get the output tensor (depends on model output layer name)
+            if len(predictions_tensor) == 1:
+                # If there's only one output tensor, use that
+                first_key = list(predictions_tensor.keys())[0]
+                predictions = predictions_tensor[first_key]
+                print(f"Using output tensor with key: {first_key}")
             else:
-                # It might already be a tensor
-                predictions = predictions_dict
-                print(f"Prediction output is not a dictionary")
+                # Try common output names
+                if "predictions" in predictions_tensor:
+                    predictions = predictions_tensor["predictions"]
+                elif "logits" in predictions_tensor:
+                    predictions = predictions_tensor["logits"]
+                elif "output_0" in predictions_tensor:
+                    predictions = predictions_tensor["output_0"]
+                else:
+                    # Use the first one as a fallback
+                    first_key = list(predictions_tensor.keys())[0]
+                    predictions = predictions_tensor[first_key]
+                    print(f"Using output tensor with key: {first_key}")
             
-            # Now that we have the prediction tensor, we can proceed as before
             print(f"Prediction completed: shape={predictions.shape}")
             
-            # Convert the EagerTensor to numpy array before using argsort
+            # Convert to numpy array for processing
             predictions_np = predictions.numpy()
-            top_5_idx = predictions_np[0].argsort()[-5:][::-1]
+            top_5_idx = np.argsort(predictions_np[0])[-5:][::-1]
             print(f"Top 5 indices: {top_5_idx}")
             
             # Check if class_names list is long enough to contain all indices
@@ -184,8 +243,13 @@ def predict():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Kubernetes liveness probe"""
+    global model
     if model is None:
-        return jsonify({'status': 'error', 'message': 'Model not loaded'}), 500
+        try:
+            load_model()
+            return jsonify({'status': 'healthy', 'model_type': os.path.basename(MODEL_DIR)})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': f'Failed to load model: {str(e)}'}), 500
     return jsonify({'status': 'healthy', 'model_type': os.path.basename(MODEL_DIR)})
 
 if __name__ == '__main__':

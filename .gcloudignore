@@ -1,0 +1,54 @@
+# Python pycache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Training files and datasets
+training_checkpoints/
+cars_train/
+cars_test/
+organized_cars_dataset/
+cars_annos.mat
+
+# Model files
+saved_model/
+*.pb
+*.h5
+*.ckpt
+*.weights
+*.pt
+*.pth
+
+# Documentation and examples
+README*.md
+*.png
+*.jpg
+*.jpeg
+*.txt
+!requirements.txt
+
+# Git and version control
+.git/
+.gitignore
+.gcloudignore
+
+# Local development files
+.vscode/
+.idea/
+*.log
+.env
+__MACOSX/
+.DS_Store
+
+# Exclude everything except the essential files
+*
+!app.py
+!Dockerfile
+!requirements.txt
+!kubernetes/
+!kubernetes/deployment.yaml
+!kubernetes/service-account.yaml

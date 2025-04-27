@@ -14,12 +14,14 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code and model
+# Copy application code
 COPY app.py .
-COPY saved_model ./saved_model
+
+# Create directories for model downloads
+RUN mkdir -p /tmp/models /tmp/uploads
 
 # Set environment variables
-ENV MODEL_DIR=/app/saved_model/transfer
+ENV MODEL_DIR=/tmp/models/transfer
 ENV PORT=8080
 
 # Expose the port

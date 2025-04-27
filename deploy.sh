@@ -1,60 +1,66 @@
 #!/bin/bash
-# Script to build and deploy the car recognition API to Google Cloud
+
+set -e  # Exit on error
 
 # Configuration
-PROJECT_ID="your-car-recognition-project"  # Replace with your actual GCP project ID
-GCP_REGION="us-central1"  # Replace with your preferred region
+PROJECT_ID="car-recognition-deep-learning"  # Set this to your actual GCP project ID
+GCP_REGION="europe-west1"  # Your chosen region
+CLUSTER_NAME="car-recognition-cluster"
 IMAGE_NAME="car-recognition-api"
-GCR_IMAGE="gcr.io/${PROJECT_ID}/${IMAGE_NAME}"
+SERVICE_ACCOUNT="car-recognition-service-account"
 
-# Step 1: Export the model (if not already done)
-echo "Step 1: Exporting the model..."
-python export_model.py --model-type transfer
+# Set Google Cloud project
+echo "Setting Google Cloud project to $PROJECT_ID..."
+gcloud config set project $PROJECT_ID
 
-# Step 2: Build the Docker image
-echo "Step 2: Building Docker image..."
-docker build -t ${IMAGE_NAME}:latest .
+# Build and push Docker image to Google Container Registry
+echo "Building and pushing Docker image..."
+gcloud builds submit --tag gcr.io/$PROJECT_ID/$IMAGE_NAME
 
-# Step 3: Configure Docker for GCR
-echo "Step 3: Configuring Docker for Google Container Registry..."
-gcloud auth configure-docker
+# Create GKE cluster if it doesn't exist
+if ! gcloud container clusters describe $CLUSTER_NAME --region=$GCP_REGION &>/dev/null; then
+  echo "Creating Kubernetes cluster..."
+  gcloud container clusters create $CLUSTER_NAME \
+    --region=$GCP_REGION \
+    --num-nodes=1 \
+    --machine-type=n1-standard-2
+else
+  echo "Cluster $CLUSTER_NAME already exists."
+fi
 
-# Step 4: Tag and push the image to GCR
-echo "Step 4: Tagging and pushing image to Google Container Registry..."
-docker tag ${IMAGE_NAME}:latest ${GCR_IMAGE}:latest
-docker push ${GCR_IMAGE}:latest
+# Get credentials for the cluster
+echo "Getting cluster credentials..."
+gcloud container clusters get-credentials $CLUSTER_NAME --region=$GCP_REGION
 
-# Step 5: Create a GKE cluster (if not already created)
-echo "Step 5: Creating GKE cluster..."
-gcloud container clusters create car-recognition-cluster \
-    --num-nodes=2 \
-    --machine-type=n1-standard-2 \
-    --region=${GCP_REGION}
+# Apply Service Account Configuration
+echo "Applying Service Account configuration..."
+kubectl apply -f kubernetes/service-account.yaml
 
-# Step 6: Get credentials for the cluster
-echo "Step 6: Getting credentials for the cluster..."
-gcloud container clusters get-credentials car-recognition-cluster --region=${GCP_REGION}
+# Grant storage access to service account
+echo "Setting up Cloud Storage permissions..."
+# Get the GKE service account email
+GKE_SA=$(kubectl get serviceaccount $SERVICE_ACCOUNT -o jsonpath='{.metadata.name}')
+if [ -n "$GKE_SA" ]; then
+  # Get the namespace
+  NAMESPACE=$(kubectl config view --minify --output 'jsonpath={..namespace}')
+  # Create a fully qualified service account name
+  FULL_GKE_SA="${GKE_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+  # Grant storage object viewer role
+  gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:${FULL_GKE_SA}" \
+    --role="roles/storage.objectViewer"
+  echo "Granted storage object viewer role to $FULL_GKE_SA"
+else
+  echo "Warning: Service account $SERVICE_ACCOUNT not found, skipping IAM configuration"
+fi
 
-# Step 7: Update Kubernetes deployment file with correct project ID
-echo "Step 7: Updating Kubernetes deployment file..."
-sed -i "s/\[PROJECT_ID\]/${PROJECT_ID}/g" kubernetes/deployment.yaml
-
-# Step 8: Apply Kubernetes configurations
-echo "Step 8: Applying Kubernetes configurations..."
+# Apply Kubernetes configuration
+echo "Deploying to Kubernetes..."
 kubectl apply -f kubernetes/deployment.yaml
 
-# Step 9: Get the external IP (this may take a few minutes to be assigned)
-echo "Step 9: Getting external IP (may take a few minutes)..."
-echo "Waiting for external IP to be assigned..."
-while true; do
-    EXTERNAL_IP=$(kubectl get service car-recognition-api -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-    if [ -n "$EXTERNAL_IP" ]; then
-        break
-    fi
-    echo -n "."
-    sleep 10
-done
+# Replace placeholders in Kubernetes configuration
+kubectl set image deployment/car-recognition-api car-recognition-api=gcr.io/$PROJECT_ID/$IMAGE_NAME:latest
 
-echo -e "\nDeployment complete!"
-echo "Your Car Recognition API is now available at: http://${EXTERNAL_IP}/predict"
-echo "To test, use: curl -X POST -F \"file=@/path/to/car/image.jpg\" http://${EXTERNAL_IP}/predict"
+echo "Deployment completed successfully!"
+echo "To check status: kubectl get pods"
+echo "To get the service URL: kubectl get service car-recognition-service"
